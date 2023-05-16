@@ -1,0 +1,222 @@
+---
+title: "BayesTraits exploration"
+author: "Pol"
+date: "2023-05-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##### Libraries
+```{r, message=FALSE}
+library("ggplot2")
+library("plotly")
+library("dplyr")
+```
+
+##### Pathway, gene, SNP and prior model
+```{r}
+path_BT_files <- "//files1.igc.gulbenkian.pt/folders/ANB/Pol/BayesTraitsV4/"
+pathway <- "OXTP" # OXTP, DOPP, SERP, STEP or VT-R
+gene <- "CD38a4"
+position_snp <- "13190091"
+prior_model <- "uni" # uni, rs-exp05, rs-nor015005, rs-uni005
+```
+
+##### Read and clean files
+For both dependent and independent model, Stones (Lh) file and Log file are read. 
+**Stones** file computes the marginal likelihood
+**Log** file shows the rate parameters for every transition at each iteration
+Four dataframes read:
+    * stones_ind
+    * stones_dep
+    * logfile_ind
+    * logfile_dep
+```{r, echo=FALSE}
+# Stones Independent
+stones_ind_read <- read.csv(file = paste(path_BT_files, "Pathways_",
+                                prior_model, "/",
+                                pathway, "/",
+                                gene, "/",
+                                gene, "_", position_snp, "_PB_ind.txt.Stones.txt", sep = ""),
+                       sep = "\t", skip = 6)
+stones_ind <- stones_ind_read[1:(nrow(stones_ind_read) - 2), ] # Remove last line
+
+# Stones dependent
+stones_dep_read <- read.csv(file = paste(path_BT_files, "Pathways_",
+                                prior_model, "/",
+                                pathway, "/",
+                                gene, "/",
+                                gene, "_", position_snp, "_PB_dep.txt.Stones.txt", sep = ""),
+                       sep = "\t", skip = 6)
+stones_dep <- stones_dep_read[1:(nrow(stones_dep_read) - 2), ] # Remove last line
+
+# Logfile independent
+logfile_ind_read <- readLines(paste(path_BT_files, "Pathways_",
+                                prior_model, "/",
+                                pathway, "/",
+                                gene, "/",
+                                gene, "_", position_snp, "_PB_ind.txt.Log.txt", sep = ""))
+line_ind <- grep(logfile_ind_read, pattern = "Iteration\t")
+logfile_ind <- read.csv(file = paste(path_BT_files, "Pathways_",
+                                prior_model, "/",
+                                pathway, "/",
+                                gene, "/",
+                                gene, "_", position_snp, "_PB_ind.txt.Log.txt", sep = ""),
+                 sep = "\t", skip = line_ind - 1)
+
+# Logfile dependent
+logfile_dep_read <- readLines(paste(path_BT_files, "Pathways_",
+                                prior_model, "/",
+                                pathway, "/",
+                                gene, "/",
+                                gene, "_", position_snp, "_PB_dep.txt.Log.txt", sep = ""))
+line_dep <- grep(logfile_dep_read, pattern = "Iteration\t")
+logfile_dep <- read.csv(file = paste(path_BT_files, "Pathways_",
+                                prior_model, "/",
+                                pathway, "/",
+                                gene, "/",
+                                gene, "_", position_snp, "_PB_dep.txt.Log.txt", sep = ""),
+                 sep = "\t", skip = line_dep - 1)
+```
+
+##### Likelihood
+The Lh needs to be stable around the same values to move forward with the analysis.
+```{r}
+Lh_plot_ind_dat <- logfile_ind[c("Iteration", "Lh")]
+Lh_plot_dep_dat <- logfile_dep[c("Iteration", "Lh")]
+
+Lh_plot_ind <- ggplot(Lh_plot_ind_dat, aes(x=Iteration, y=Lh))+
+  geom_point() +
+  labs(title = "Lh independent model")
+Lh_plot_dep <- ggplot(Lh_plot_dep_dat, aes(x=Iteration, y=Lh))+
+  geom_point() +
+  labs(title = "Lh dependent model")
+  
+
+Lh_plot_ind
+Lh_plot_dep
+#subplot(Lh_plot_dep, Lh_plot_ind)
+```
+
+#### Restriction between acquisition and lost of trait
+**alpha1**: Acquisition trait 1 (From No-PB to Pair-Bonding)
+**beta1**: Lost of trait 1 (From Pair-Bonding to No-PB)
+**alpha2**: Acquisition trait 2 (From reference SNP to alternative SNP)
+**beta2**: Lost of trait 2 (From alternative SNP to reference SNP)
+
+By plotting *a1 vs b1*, we aim to see if there is any restriction between these two transitions
+```{r}
+
+restr_PB <- ggplot(logfile_ind, aes(x=beta1, y=alpha1))+
+  geom_point()
+
+restr_SNP <- ggplot(logfile_ind, aes(x=beta2, y=alpha2))+
+  geom_point()
+
+restr_PB
+restr_SNP
+```
+
+If the relationship is linear, one state is contingent to the other. However, this will need to be tested statistically.
+
+#### Parameter distribution
+The rate parameters are only relative to one another, so the values need to be considered compared to each other ([BayesTraits Manual](./BayesTraitsV4.0.0-Manual.pdf)).
+
+Given that we work with the same trait on the same phylogeny, we can assume that the phenotype (trait 1) transition has the same rate IN THE INDEPENDENT MODEL. This would only be not the case when the tree has been pruned due to missing data. Bucause the rates are relative to one another, it is wrong to assume that the phenotype transition rate distribution will be the sam in the dependent and independent model.
+##### Parameter distribution of the independent model
+```{r}
+dfa1 = logfile_ind[c("Iteration", "alpha1")]
+dfb1 = logfile_ind[c("Iteration", "beta1")]
+dfa2 = logfile_ind[c("Iteration", "alpha2")]
+dfb2 = logfile_ind[c("Iteration", "beta2")]
+
+qa1 <- ggplot(dfa1, aes(x = alpha1)) +
+  geom_histogram()
+qb1 <- ggplot(dfb1, aes(x = beta1)) +
+  geom_histogram()
+qa2 <- ggplot(dfa2, aes(x = alpha2)) +
+  geom_histogram()
+qb2 <- ggplot(dfb2, aes(x = beta2)) +
+  geom_histogram()
+
+annotations = list(
+  list(x=0, y=1.05, text="a1", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=1, y=1.05, text="b1", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=0, y=0.4, text="a2", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=1, y=0.4, text="b2", showarrow=F, yref='paper', xref= 'paper')
+)
+
+comb <- subplot(qa1, qb1, qa2, qb2, nrows = 2, shareX = F, shareY = F)
+comb %>%
+  layout(annotations = annotations, title = list(text = "Parameter distribution"))
+```
+
+##### Parameter distribution of the dependent model
+```{r}
+dfq12 = logfile_dep[c("Iteration", "q12")]
+dfq13 = logfile_dep[c("Iteration", "q13")]
+dfq21 = logfile_dep[c("Iteration", "q21")]
+dfq24 = logfile_dep[c("Iteration", "q24")]
+dfq31 = logfile_dep[c("Iteration", "q31")]
+dfq34 = logfile_dep[c("Iteration", "q34")]
+dfq42 = logfile_dep[c("Iteration", "q42")]
+dfq43 = logfile_dep[c("Iteration", "q43")]
+
+q12 <- ggplot(dfq12, aes(x = q12)) +
+  geom_histogram()
+q13 <- ggplot(dfq13, aes(x = q13)) +
+  geom_histogram()
+q21 <- ggplot(dfq21, aes(x = q21)) +
+  geom_histogram()
+q24 <- ggplot(dfq24, aes(x = q24)) +
+  geom_histogram()
+q31 <- ggplot(dfq31, aes(x = q31)) +
+  geom_histogram()
+q34 <- ggplot(dfq34, aes(x = q34)) +
+  geom_histogram()
+q42 <- ggplot(dfq42, aes(x = q42)) +
+  geom_histogram()
+q43 <- ggplot(dfq43, aes(x = q43)) +
+  geom_histogram()
+
+annotations = list(
+  list(x=0, y=1.05, text="q12", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=1, y=1.05, text="q13", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=0, y=0.74, text="q21", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=1, y=0.74, text="q24", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=0, y=0.46, text="q31", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=1, y=0.46, text="q34", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=0, y=0.19, text="q42", showarrow=F, yref='paper', xref= 'paper'),
+  list(x=1, y=0.19, text="q43", showarrow=F, yref='paper', xref= 'paper')
+  )
+
+comb <- subplot(q12, q13, q21, q13, q31, q34, q42, q43, nrows = 4, shareX = T, shareY = T)
+comb %>%
+  layout(annotations = annotations, title = list(text = "Parameter distribution dependent model"))
+```
+
+#### Plot SNP vs phenotype
+Read files
+```{r}
+plot_2D <- read.csv(file = paste("//files1.igc.gulbenkian.pt/folders/ANB/Pol/bc_Pathways/", 
+                                 pathway, "/pos_selection/positions_BT/",
+                                 gene, "_", position_snp, "_PB_BT.txt",
+                                 sep = ""),
+                    sep = "\t")
+spp_tribe <- read.csv(file = "//files1.igc.gulbenkian.pt/folders/ANB/Pol/Figures/SNPs/spp-tribe.txt", sep = "\t")
+```
+
+```{r}
+colnames(plot_2D) <- c("spp", "PB", "SNP")
+df_join <- inner_join(plot_2D, spp_tribe, by="spp")
+df_final <- df_join[!(grepl("m_d", df_join$PB) | grepl("m_d", df_join$SNP)), ]
+
+SNP_vs_PB <- ggplot(df_final, aes(x = PB, y = SNP, color = tribe)) +
+  geom_point(position=position_jitter(width=0.2, height = 0.2))
+
+SNP_vs_PB
+```
+
