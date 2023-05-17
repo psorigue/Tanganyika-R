@@ -1,0 +1,122 @@
+---
+title: "Expression-phenotype corelation"
+author: "Pol"
+date: "2023-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R packages
+```{r, echo=FALSE, eval=FALSE}
+packages <- c("ape", "pegas", "phylolm")
+for (pack in packages) {
+  install.packages(pack)
+}
+```
+
+Load libraries.
+```{r}
+library(ape)
+library(pegas)
+library(phylolm)
+```
+
+## Path
+```{r}
+server_path <- "//files1.igc.gulbenkian.pt/folders/ANB/Pol/Expression/phylo_regression/"
+script_path <- "C:/Users/Pol/Desktop/github_repo/Tanganyika-R/phylogenetic_regression/"
+```
+
+
+## The dataset
+The dataset is read from the expression data (El Taher et al., 2021), and reduced to only brain samples.
+``samples`` is a dataframe that contains the number of species and replicates per species.
+```{r}
+samples <- read.csv(file = "//files1.igc.gulbenkian.pt/folders/ANB/Pol/Expression/count_ind_per-spp.txt", sep = "\t", header = F)
+dataset_expr <- read.csv(file = "//files1.igc.gulbenkian.pt/folders/ANB/Pol/Expression/cichl_exp_init.csv")
+str(samples)
+summary(samples)
+```
+74 species with a minimum of 4 replicates
+```{r}
+str(dataset_expr)
+```
+
+#### Clean data
+Remove genes with all counts == 0:
+```{r}
+# Spot non-numeric elements among the gene expression values
+non_numeric_cols <- sapply(dataset_expr, function(x) any(!is.na(x) & !is.numeric(x)))
+print(names(dataset_expr)[non_numeric_cols])
+# Remove columns with all zeros
+col_dt <- names(which(colSums(dataset_expr[6:ncol(dataset_expr)])!=0))
+dt_fin <- dataset_expr[,c(colnames(dataset_expr)[1:5], col_dt)]
+```
+The final dataset contains **5 variables**, **32554 genes** (columns), **428 individuals** (rows).
+5 Variables:
+  * **spp**
+  * **Tribe**: "genus"
+  * **id**: Individual ID
+  * **pair-bond**: Pair-bonding. Either 0 (no) or 1 (yes)
+  * **sex**: M or F
+
+## Not acounting for phylogenetic distance: glm()
+In this case, we do not need to consider the species. Every gene and individual will provide a point. Every gene will be analysed separately and it will contain (in principle) 428 data points.
+
+### Create file to include the content of the glm()
+Create file or delete content if the file exists:
+```{r, eval=FALSE}
+# Creates file
+if (file.exists(paste(server_path, "sink_glm.txt"))) {
+  file.create(paste(server_path, "sink_glm.txt"))
+} else {
+  file_conn <- file(paste(server_path, "sink_glm.txt", sep = ""), open = "w") # The content of the file is deleted if it is open with the "writing" option
+  close(file_conn)
+}
+```
+
+### Run GLM for each gene
+Given the large variation in the standard deviations that can exist between genes, the counts are normalized. This code chunk only has to be run once.
+```{r, eval=FALSE}
+
+# Delete content of the file in case it's not empty
+file_path <- paste(server_path, "sink_glm.txt", sep = "")
+file_conn <- file(file_path, open = "w") 
+close(file_conn)
+
+# Select gene column names
+gene_cols <- colnames(dt_fin)[grep("gene", colnames(dt_fin))]
+
+# Open the sink file
+sink(file = file_path, append = TRUE)
+
+# glm()
+for (colns in gene_cols) { 
+  
+  df_ind <- dt_fin[c("pair_bond", colns)] # Subsets the dataset to only phenotype and gene expression
+  df_ind["std_counts"] <- (df_ind[[colns]] - mean(df_ind[[colns]]))/sd(df_ind[[colns]]) # Adds normalized counts
+  
+  print(colns)
+  print(summary(glm(pair_bond ~ std_counts, data = df_ind, family = 'binomial'))$coefficients[,c(3,4)]) # Returns coefficients for the glm in each gene
+
+}
+
+closeAllConnections() # Close the file
+```
+
+Example with one gene (same code as in the loop)
+```{r}
+exampl_gene <- "geneID_100690546"
+
+df_ind <- dt_fin[c("pair_bond", exampl_gene)] # Subsets the dataset to only phenotype and gene expression
+df_ind["std_counts"] <- (df_ind[[exampl_gene]] - mean(df_ind[[exampl_gene]]))/sd(df_ind[[exampl_gene]]) # Adds normalized counts
+
+print(summary(glm(pair_bond ~ std_counts, data = df_ind, family = 'binomial'))) # Whole summary
+print(summary(glm(pair_bond ~ std_counts, data = df_ind, family = 'binomial'))$coefficients[,c(4)]) # Only p-value
+```
+The important part of the output is the ``intercept``. In case it is significative, means that there is a correlation between gene expression and phenotype (pre-FDR)
+
+
